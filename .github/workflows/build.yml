@@ -1,0 +1,81 @@
+name: Build APK
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            /usr/local/lib/android/sdk/ndk
+          key: pulse-gradle-v1
+      - name: Restore keystore
+        id: ks
+        uses: actions/cache/restore@v4
+        with:
+          path: android/app/pulse-release.jks
+          key: pulse-release-key-v1
+      - name: Flutter create android
+        run: |
+          if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
+            flutter create --org com.pulse --project-name pulse_sender --platforms android .
+          fi
+          rm -rf test
+      - name: Make keystore
+        run: |
+          if [ ! -f android/app/pulse-release.jks ]; then
+            keytool -genkeypair -v -keystore android/app/pulse-release.jks -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias pulse -storepass pulse123 -keypass pulse123 -dname "CN=PulseSender"
+          fi
+          printf 'storePassword=pulse123\nkeyPassword=pulse123\nkeyAlias=pulse\nstoreFile=pulse-release.jks\n' > android/key.properties
+      - name: Save keystore
+        if: steps.ks.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: android/app/pulse-release.jks
+          key: pulse-release-key-v1
+      - name: Patch android
+        run: bash tool/patch_android.sh
+      - name: Bump version
+        run: |
+          sed -i "s/^version: .*/version: 1.0.${{ github.run_number }}+${{ github.run_number }}/" pubspec.yaml
+          grep '^version:' pubspec.yaml
+      - name: pub get
+        run: flutter pub get
+      - name: Build release APK
+        run: flutter build apk --release --split-per-abi --target-platform android-arm64
+      - name: Verify and name APK
+        run: |
+          set -e
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "out/PulseSender-v${{ github.run_number }}.apk"
+          cd out && sha256sum *.apk > SHA256SUMS.txt
+          echo "Скачай APK и установи на телефон Б." > NOTES.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PulseSender-apk
+          path: out/*.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: PulseSender — сборка ${{ github.run_number }}
+          body_path: out/NOTES.md
+          files: |
+            out/*.apk
+            out/SHA256SUMS.txt
+          make_latest: true
