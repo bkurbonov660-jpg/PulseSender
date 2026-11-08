@@ -1,0 +1,14 @@
+// Кладётся в ~/.gradle/init.d/ — действует на все модули (file_picker и т.д.)
+allprojects {
+    afterEvaluate { p ->
+        def ext = p.extensions.findByName('android')
+        if (ext != null) {
+            try {
+                ext.compileSdkVersion(36)
+                println "[force-compile-sdk] ${p.name}: compileSdk -> 36"
+            } catch (Throwable t) {
+                println "[force-compile-sdk] ${p.name}: skipped (${t.message})"
+            }
+        }
+    }
+}
