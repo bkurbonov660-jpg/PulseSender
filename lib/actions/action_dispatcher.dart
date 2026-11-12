@@ -1,0 +1,326 @@
+import '../models/agent_action.dart';
+import '../services/accessibility_bridge.dart';
+import '../services/system_actions_service.dart';
+
+class AgentActionDispatcher {
+  final AccessibilityBridge accessibilityBridge;
+  final SystemActionsService systemActions;
+
+  const AgentActionDispatcher({
+    required this.accessibilityBridge,
+    required this.systemActions,
+  });
+
+  Future<String> dispatch(AgentAction action) async {
+    final p = action.params;
+    switch (action.type) {
+      case 'tap':
+        final ok = await accessibilityBridge.tapByIndex(
+          action.target ?? 0,
+          fallbackX: p['x'] as num?,
+          fallbackY: p['y'] as num?,
+        );
+        return ok ? 'Тап выполнен' : 'Не удалось нажать на элемент';
+
+      case 'tap_xy':
+        final x = (p['x'] as num?)?.toInt() ?? 540;
+        final y = (p['y'] as num?)?.toInt() ?? 1200;
+        final ok = await accessibilityBridge.tapCoordinates(x, y);
+        return ok ? 'Тап по ($x, $y) выполнен' : 'Не удалось нажать по координатам';
+
+      case 'input_text':
+        final ok = await accessibilityBridge.inputTextByIndex(
+          action.target ?? 0,
+          action.text ?? '',
+          emulateGestureTyping: p['emulate_typing'] == true,
+        );
+        return ok ? 'Текст введён' : 'Не удалось ввести текст';
+
+      case 'scroll':
+        final ok = await accessibilityBridge.scrollScreen(action.direction ?? 'down');
+        return ok ? 'Скролл выполнен' : 'Не удалось проскроллить';
+
+      case 'swipe':
+        final from = (p['from'] as List?);
+        final to = (p['to'] as List?);
+        final x1 = from != null && from.length >= 2
+            ? (from[0] as num)
+            : ((p['x1'] as num?) ?? 500);
+        final y1 = from != null && from.length >= 2
+            ? (from[1] as num)
+            : ((p['y1'] as num?) ?? 1400);
+        final x2 = to != null && to.length >= 2
+            ? (to[0] as num)
+            : ((p['x2'] as num?) ?? 500);
+        final y2 = to != null && to.length >= 2
+            ? (to[1] as num)
+            : ((p['y2'] as num?) ?? 400);
+        final durationMs = (p['duration_ms'] as num?)?.toInt() ?? 350;
+        final ok = await accessibilityBridge.swipeGesture(
+          x1: x1,
+          y1: y1,
+          x2: x2,
+          y2: y2,
+          durationMs: durationMs,
+        );
+        return ok ? 'Свайп выполнен' : 'Ошибка свайпа';
+
+      case 'long_press':
+        final ok = await accessibilityBridge.longPressByIndex(
+          action.target ?? 0,
+          durationMs: (p['duration_ms'] as num?)?.toInt() ?? 800,
+        );
+        return ok ? 'Долгое нажатие выполнено' : 'Ошибка долгого нажатия';
+
+      case 'open_app':
+        final ok = await systemActions.openApp(
+          packageName: action.packageName,
+          appName: action.appName,
+        );
+        return ok ? 'Приложение открыто' : 'Приложение не найдено';
+
+      case 'navigate_back':
+        await accessibilityBridge.performGlobalNav('back');
+        return 'Нажато Назад';
+
+      case 'navigate_home':
+        await accessibilityBridge.performGlobalNav('home');
+        return 'Нажато Домой';
+
+      case 'navigate_recents':
+        await accessibilityBridge.performGlobalNav('recents');
+        return 'Открыты недавние';
+
+      case 'navigate_notifications':
+        await accessibilityBridge.performGlobalNav('notifications');
+        return 'Открыта шторка уведомлений';
+
+      case 'wait':
+        final sec = (p['seconds'] as num?)?.toInt() ?? 2;
+        await Future.delayed(Duration(seconds: sec.clamp(1, 30)));
+        return 'Ожидание $sec сек. завершено';
+
+      case 'wait_for':
+        final targetText = (p['text'] ?? '').toString();
+        final timeoutSec = (p['timeout'] as num?)?.toInt() ?? 10;
+        final found = await accessibilityBridge.waitForText(
+          targetText,
+          timeoutSeconds: timeoutSec,
+        );
+        return found ? 'Текст "$targetText" появился' : 'Таймаут ожидания "$targetText"';
+
+      case 'call':
+        return await systemActions.makePhoneCall((p['number'] ?? '').toString());
+
+      case 'call_contact':
+        return await systemActions.callContactByName((p['name'] ?? '').toString());
+
+      case 'end_call':
+        return await systemActions.endPhoneCall();
+
+      case 'open_call_log':
+        return await systemActions.openCallLog();
+
+      case 'send_sms':
+        return await systemActions.sendSms(
+          number: (p['number'] ?? '').toString(),
+          text: (p['text'] ?? '').toString(),
+        );
+
+      case 'read_sms':
+        return await systemActions.readRecentSms(limit: (p['limit'] as num?)?.toInt() ?? 5);
+
+      case 'set_alarm':
+        final daysList = ((p['days'] as List?) ?? const [])
+            .map((e) => (e as num).toInt())
+            .toList();
+        return await systemActions.setAlarm(
+          hour: (p['hour'] as num?)?.toInt() ?? 7,
+          minute: (p['minute'] as num?)?.toInt() ?? 0,
+          label: (p['label'] ?? 'PulseAgent').toString(),
+          days: daysList,
+          vibrate: p['vibrate'] != false,
+        );
+
+      case 'dismiss_alarm':
+        return await systemActions.dismissAlarm();
+
+      case 'show_alarms':
+        return await systemActions.showAlarms();
+
+      case 'set_timer':
+        return await systemActions.setTimer(
+          seconds: (p['seconds'] as num?)?.toInt() ?? 60,
+          label: (p['label'] ?? 'Таймер').toString(),
+        );
+
+      case 'open_stopwatch':
+        return await systemActions.openStopwatch();
+
+      case 'create_reminder':
+        return await systemActions.createReminder(
+          title: (p['title'] ?? 'Напоминание').toString(),
+          datetimeIso: (p['datetime'] ?? '').toString(),
+          description: (p['description'] ?? '').toString(),
+          minutesBefore: (p['minutes_before'] as num?)?.toInt() ?? 10,
+          repeatRule: p['repeat']?.toString(),
+        );
+
+      case 'create_calendar_event':
+        return await systemActions.createCalendarEvent(
+          title: (p['title'] ?? 'Событие').toString(),
+          startIso: (p['start'] ?? '').toString(),
+          endIso: (p['end'] ?? '').toString(),
+          location: (p['location'] ?? '').toString(),
+          description: (p['description'] ?? '').toString(),
+        );
+
+      case 'get_calendar_events':
+        return await systemActions.getUpcomingCalendarEvents(
+          days: (p['days'] as num?)?.toInt() ?? 7,
+        );
+
+      case 'find_contact':
+        return await systemActions.findContact((p['name'] ?? '').toString());
+
+      case 'create_contact':
+        return await systemActions.createContact(
+          name: (p['name'] ?? '').toString(),
+          phone: (p['phone'] ?? '').toString(),
+        );
+
+      case 'read_notifications':
+        return await systemActions.readActiveNotifications();
+
+      case 'dismiss_notifications':
+        return await systemActions.dismissAllNotifications();
+
+      case 'set_volume':
+        return await systemActions.setVolume(
+          stream: (p['stream'] ?? 'music').toString(),
+          levelPercent: (p['level'] as num?)?.toInt() ?? 50,
+        );
+
+      case 'set_brightness':
+        return await systemActions.setBrightness(
+          levelPercent: (p['level'] as num?)?.toInt() ?? 80,
+        );
+
+      case 'toggle_wifi':
+        return await systemActions.toggleWifi(p['state'] == true);
+
+      case 'toggle_bluetooth':
+        return await systemActions.toggleBluetooth(p['state'] == true);
+
+      case 'toggle_airplane':
+        return await systemActions.openAirplaneModeSettings();
+
+      case 'toggle_dnd':
+        return await systemActions.toggleDnd(p['state'] == true);
+
+      case 'toggle_flashlight':
+        return await systemActions.toggleFlashlight(p['state'] == true);
+
+      case 'vibrate':
+        return await systemActions.vibrate(ms: (p['ms'] as num?)?.toInt() ?? 500);
+
+      case 'open_power_saver':
+        return await systemActions.openPowerSaverSettings();
+
+      case 'take_screenshot':
+        return await accessibilityBridge.takeScreenshot();
+
+      case 'open_camera':
+        return await systemActions.openCamera(mode: (p['mode'] ?? 'photo').toString());
+
+      case 'record_audio':
+        return await systemActions.recordAudioClip(
+          seconds: (p['seconds'] as num?)?.toInt() ?? 10,
+        );
+
+      case 'open_gallery':
+        return await systemActions.openGallery();
+
+      case 'play_media':
+        return await systemActions.controlMedia((p['state'] ?? 'play').toString());
+
+      case 'next_track':
+        return await systemActions.controlMedia('next');
+
+      case 'prev_track':
+        return await systemActions.controlMedia('previous');
+
+      case 'open_music_track':
+        return await systemActions.openMusicTrack(
+          query: (p['query'] ?? '').toString(),
+          app: (p['app'] ?? 'spotify').toString(),
+        );
+
+      case 'check_network':
+        return await systemActions.getNetworkStatus();
+
+      case 'get_battery':
+        return await systemActions.getBatteryInfo();
+
+      case 'get_location':
+        return await systemActions.getCurrentLocation();
+
+      case 'open_map':
+        return await systemActions.openMapAddress((p['address'] ?? '').toString());
+
+      case 'call_taxi':
+        return await systemActions.openTaxiDeepLink(
+          destination: (p['address'] ?? p['destination'] ?? '').toString(),
+        );
+
+      case 'list_apps':
+        return await systemActions.listInstalledApps();
+
+      case 'open_play_store':
+        return await systemActions.openPlayStore((p['package'] ?? '').toString());
+
+      case 'uninstall_app':
+        return await systemActions.uninstallApp((p['package'] ?? '').toString());
+
+      case 'open_url':
+        return await systemActions.openUrl((p['url'] ?? 'https://google.com').toString());
+
+      case 'search_web':
+        return await systemActions.searchGoogle((p['query'] ?? '').toString());
+
+      case 'download_file':
+        return await systemActions.downloadFile(
+          url: (p['url'] ?? '').toString(),
+          fileName: (p['filename'] ?? p['fileName'])?.toString(),
+        );
+
+      case 'send_email':
+        return await systemActions.composeEmail(
+          to: (p['to'] ?? '').toString(),
+          subject: (p['subject'] ?? '').toString(),
+          body: (p['body'] ?? '').toString(),
+        );
+
+      case 'send_messenger':
+        return await systemActions.openMessengerChat(
+          messenger: (p['app'] ?? 'telegram').toString(),
+          phone: (p['phone'] ?? '').toString(),
+          text: (p['text'] ?? '').toString(),
+        );
+
+      case 'smart_home':
+        return await systemActions.triggerSmartHome(
+          uri: (p['deeplink'] ?? p['uri'] ?? '').toString(),
+          packageName: (p['package'] ?? 'com.google.android.apps.chromecast.app').toString(),
+        );
+
+      case 'finish':
+      case 'fail':
+      case 'ask_user':
+        return action.reason ?? 'Задача завершена';
+
+      default:
+        return 'Неизвестная команда: ${action.type}';
+    }
+  }
+}
